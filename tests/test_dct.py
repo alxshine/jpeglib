@@ -10,9 +10,10 @@ import os
 import pandas as pd
 from parameterized import parameterized
 from PIL import Image
-import subprocess
+import importlib
 import tempfile
 import unittest
+import sys
 
 import jpeglib
 from _defs import version_cluster, qt50_standard
@@ -144,20 +145,20 @@ class TestDCT(unittest.TestCase):
             np.testing.assert_array_equal(Cr_ref, Cr)
             np.testing.assert_array_equal(qt_ref, qt)
 
+    @unittest.skipIf(
+        importlib.find_loader("decoder") is None,
+        "dct_coefficient_decoder not installed",
+    )
     def test_dct_coefficient_decoder(self):
         """Test output against btlorch/dct-coefficient-decoder."""
         self.logger.info("test_dct_coefficient_decoder")
         # read DCT with jpeglib
         im = jpeglib.read_dct("tests/assets/IMG_0311.jpeg")
         # read DCT with dct-coefficient-decoder
-        try:
-            from decoder import PyCoefficientDecoder
-        except (ModuleNotFoundError, ImportError) as e:  # error loading
-            logging.error(
-                f"invalid installation of dct-coefficient-decoder: {e}"
-            )
-            return
-        d = PyCoefficientDecoder('tests/assets/IMG_0311.jpeg')
+
+        from decoder import PyCoefficientDecoder
+
+        d = PyCoefficientDecoder("tests/assets/IMG_0311.jpeg")
         # convert to the same format
         qtT = np.stack([
             d.get_quantization_table(0),
@@ -179,18 +180,20 @@ class TestDCT(unittest.TestCase):
         np.testing.assert_array_equal(im.Cr, CrT)
         np.testing.assert_array_equal(im.qt, qtT)
 
+    @unittest.skipIf(
+        importlib.find_loader("python-jpeg-toolbox") is None,
+        "python-jpeg-toolbox not installed",
+    )
     def test_python_jpeg_toolbox(self):
         """Test output against daniellerch/python-jpeg-toolbox."""
         self.logger.info("test_python_jpeg_toolbox")
         # read DCT with jpeglib
         im = jpeglib.read_dct("tests/assets/IMG_0311.jpeg")
         # read DCT with python-jpeg-toolbox
-        try:
-            import jpeg_toolbox
-        except (ModuleNotFoundError, ImportError) as e:
-            logging.error(f"invalid installation of python-jpeg-toolbox: {e}")
-            return
-        img = jpeg_toolbox.load('tests/assets/IMG_0311.jpeg')
+
+        import jpeg_toolbox
+
+        img = jpeg_toolbox.load("tests/assets/IMG_0311.jpeg")
         # convert to the same format
         YT = (
             img['coef_arrays'][0]
@@ -214,22 +217,21 @@ class TestDCT(unittest.TestCase):
         np.testing.assert_array_equal(im.Cb, CbT)
         np.testing.assert_array_equal(im.Cr, CrT)
 
+    @unittest.skipIf(
+        importlib.find_loader("torchjpeg") is None, "torchjpeg not installed"
+    )
     def test_torchjpeg(self):
         """Test output against queuecumber/torchjpeg."""
         self.logger.info("test_torchjpeg")
         # read DCT with jpeglib
         jpeg = jpeglib.read_dct("tests/assets/IMG_0791.jpeg")
         # read DCT with torchjpeg
-        try:
-            import torchjpeg.codec
-            shape, qt, Y, CbCr = torchjpeg.codec.read_coefficients(  # noqa: E501
-                "tests/assets/IMG_0791.jpeg"
-            )
-        except ModuleNotFoundError as e:  # error loading
-            logging.error(
-                f"invalid installation of torchjpeg: {e}"
-            )
-            return
+
+        import torchjpeg.codec
+
+        shape, qt, Y, CbCr = torchjpeg.codec.read_coefficients(  # noqa: E501
+            "tests/assets/IMG_0791.jpeg"
+        )
 
         # convert to the same format and test
         def get_full_shape(c):
@@ -288,6 +290,7 @@ class TestDCT(unittest.TestCase):
         np.testing.assert_equal(pil_qt, jpeg.qt)
         im.close()
 
+    @unittest.skipIf(importlib.find_loader("jpegio") is None, "jpegio not installed")
     def test_to_jpegio(self):
         """Test identical output of jpegio to DCTJPEGio interface."""
         self.logger.info("test_to_jpegio")
@@ -295,12 +298,10 @@ class TestDCT(unittest.TestCase):
         im = jpeglib.read_dct("tests/assets/IMG_0311.jpeg")
         im = jpeglib.to_jpegio(im)
         # jpegio
-        try:
-            import jpegio
-        except (ModuleNotFoundError, ImportError) as e:
-            logging.error(f"invalid installation of jpegio: {e}")
-            return 1
-        jpeg = jpegio.read('tests/assets/IMG_0311.jpeg')
+
+        import jpegio
+
+        jpeg = jpegio.read("tests/assets/IMG_0311.jpeg")
         # test quantization
         self.assertEqual(len(im.quant_tables), 2)
         np.testing.assert_array_equal(jpeg.quant_tables[0], im.quant_tables[0])
@@ -435,6 +436,10 @@ class TestDCT(unittest.TestCase):
         np.testing.assert_array_equal(qt, jpeg.qt)
 
     # === tests with non-public software ===
+    @unittest.skipUnless(
+        any(["mmsec" in sys.argv]),
+        "skipping Rainer's MMSec tests unless explicitly called",
+    )
     def test_rainer_MMSec(self):
         """Test output against Rainer's MMSec library."""
         self.logger.info("test_rainer_MMSec")
@@ -451,56 +456,55 @@ class TestDCT(unittest.TestCase):
             'Cb': jpeg.qt[jpeg.quant_tbl_no[1]],
             'Cr': jpeg.qt[jpeg.quant_tbl_no[2]],
         }
-        try:
-            # read image using Rainer's MMSec library
-            for channel in ['Y', 'Cb', 'Cr']:
 
-                # test DCT
-                res = subprocess.call(
-                    [
-                        "Rscript", "tests/test_rainer.R",  # script
-                        "dct",  # mode - quantization table or DCT coefficients
-                        channel,  # channel - Y, Cr, or Cb
-                        "tests/assets/IMG_0791.jpeg ",  # input file
-                        self.tmp.name,  # output file
-                    ],
-                    shell=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
-                )
-                if res != 0:
-                    raise Exception("Rainer's MMSec failed!")
-                df = pd.read_csv(self.tmp.name, header=None)
-                dctRainer = df.to_numpy()
-                # get jpeglib output
-                dct = jpeglib_dct[channel]
-                # convert to same shape
-                dctRainer = np.array(np.split(dctRainer, dct.shape[0], 0))
-                dctRainer = dctRainer.reshape(*dctRainer.shape[:-1], 8, 8)
-                # test equal
-                np.testing.assert_equal(dctRainer, dct)
+        # read image using Rainer's MMSec library
+        for channel in ["Y", "Cb", "Cr"]:
+            # test DCT
+            res = subprocess.call(
+                [
+                    "Rscript",
+                    "tests/test_rainer.R",  # script
+                    "dct",  # mode - quantization table or DCT coefficients
+                    channel,  # channel - Y, Cr, or Cb
+                    "tests/assets/IMG_0791.jpeg ",  # input file
+                    self.tmp.name,  # output file
+                ],
+                shell=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            if res != 0:
+                raise Exception("Rainer's MMSec failed!")
+            df = pd.read_csv(self.tmp.name, header=None)
+            dctRainer = df.to_numpy()
+            # get jpeglib output
+            dct = jpeglib_dct[channel]
+            # convert to same shape
+            dctRainer = np.array(np.split(dctRainer, dct.shape[0], 0))
+            dctRainer = dctRainer.reshape(*dctRainer.shape[:-1], 8, 8)
+            # test equal
+            np.testing.assert_equal(dctRainer, dct)
 
-                # test QT
-                res = subprocess.call(
-                    [
-                        "Rscript", "tests/test_rainer.R",  # script
-                        "qt",  # produce quantization table
-                        channel,  # Y, Cr or Cb
-                        "tests/assets/IMG_0791.jpeg",  # input file
-                        self.tmp.name,  # output file
-                    ],
-                    shell=True
-                )
-                if res != 0:
-                    raise Exception("Rainer's script failed!")
-                df = pd.read_csv("tmp/result.csv", header=None)
-                qtRainer = df.to_numpy()
-                # get jpeglib output
-                qt = jpeglib_qt[channel]
-                # compare quantization tables
-                np.testing.assert_equal(qtRainer, qt)
-        except Exception as e:
-            self.logger.error(str(e))
+            # test QT
+            res = subprocess.call(
+                [
+                    "Rscript",
+                    "tests/test_rainer.R",  # script
+                    "qt",  # produce quantization table
+                    channel,  # Y, Cr or Cb
+                    "tests/assets/IMG_0791.jpeg",  # input file
+                    self.tmp.name,  # output file
+                ],
+                shell=True,
+            )
+            if res != 0:
+                raise Exception("Rainer's script failed!")
+            df = pd.read_csv("tmp/result.csv", header=None)
+            qtRainer = df.to_numpy()
+            # get jpeglib output
+            qt = jpeglib_qt[channel]
+            # compare quantization tables
+            np.testing.assert_equal(qtRainer, qt)
 
 
 __all__ = ["TestDCT"]

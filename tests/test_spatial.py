@@ -232,10 +232,10 @@ class TestSpatial(unittest.TestCase):
         self.assert_equal_ratio_greater(im_ifast.Cb, im_float.Cb, .9)
         self.assert_equal_ratio_greater(im_ifast.Cr, im_float.Cr, .9)
 
-    @parameterized.expand([
-        ['tests/assets/images-9e/testimg.bmp', 100],
-        ['tests/assets/images-9e/testimg.bmp', 95],
-    ])
+    @unittest.skipUnless(
+        os.path.exists(os.path.join("jpeg-9a", "build", "bin", "cjpeg")),
+        "cjpeg executable not found",
+    )
     def test_dct_methods(self, input_file, quality):
         self.logger.info("test_dct_methods")
 
@@ -244,10 +244,6 @@ class TestSpatial(unittest.TestCase):
 
         # Find cjpeg executable
         cjpeg_executable = os.path.join(libjpeg_path, "bin", "cjpeg")
-        if not os.path.exists(cjpeg_executable):
-            # If cjpeg executable could not be found, skip this test. This will happen when executing tests on Windows.
-            self.logger.warning("Could not find cjpeg executable. Skipping this test.")
-            return 1
 
         # cjpeg is dynamically linked, therefore set LD_LIBRARY_PATH to ensure that cjpeg uses the right libjpeg.so instead of a system-wide version.
         lib_path = os.path.join(libjpeg_path, "lib")
@@ -393,10 +389,7 @@ class TestSpatial(unittest.TestCase):
         assert spatial.max() <= 255
 
         # Create a jpeglib object. Note that the input dtype is int64.
-        try:
-            jpeglib.from_spatial(spatial[:, :, None].astype(int))
-        except TypeError:
-            pass
+        self.assertRaises(TypeError, jpeglib.from_spatial, spatial[:, :, None].astype(int))
 
     def test_from_spatial_correct_dtype(self):
         """Check that uint8 is accepted by from_spatial.
